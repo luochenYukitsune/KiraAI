@@ -64,7 +64,13 @@ class ProviderManager:
 
     @classmethod
     def get_schema(cls, name: str) -> dict:
-        return cls._schemas.get(name, {})
+        schema = cls._schemas.get(name, {})
+        return copy.deepcopy(schema) if schema else {}
+
+    @classmethod
+    def get_manifest(cls, name: str) -> dict:
+        manifest = cls._manifests.get(name, {})
+        return copy.deepcopy(manifest) if manifest else {}
 
     def get_model_client(self, provider_id: str, model_id: str) -> Optional[BaseModelClient]:
         provider = self.get_provider(provider_id)
@@ -317,7 +323,7 @@ class ProviderManager:
         for model_type_key, type_models in model_config_root.items():
             if not isinstance(type_models, dict):
                 continue
-            for _model_id, model_cfg in type_models.items():
+            for model_id, model_cfg in type_models.items():
                 if not isinstance(model_cfg, dict):
                     continue
                 model_infos.append(
@@ -654,7 +660,7 @@ class ProviderManager:
             type_models = model_config_root.get(model_type)
             if not isinstance(type_models, dict):
                 continue
-            for _model_id, model_cfg in type_models.items():
+            for model_id, model_cfg in type_models.items():
                 if not isinstance(model_cfg, dict):
                     continue
                 for field in type_fields:

@@ -27,6 +27,18 @@ class EventType(Enum):
     MsgSent = auto()
 
 
+# @dataclass
+# class Event:
+#     """统一事件对象"""
+#     event_type: EventType
+#     payload: Any
+#     source: str
+#     timestamp: datetime = field(default_factory=datetime.now)
+#     event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+#     priority: int = 0  # 0 = normal, 1 = high, 2 = critical
+#     metadata: Dict[str, Any] = field(default_factory=dict)
+
+
 class EventBus:
     """事件总线"""
 
@@ -65,7 +77,6 @@ class EventBus:
         self.stats.set_stats("messages", self.total_messages_stats)
 
         self._running_event = asyncio.Event()
-        self._pending_dispatches: set[asyncio.Task] = set()
         self.logger = get_logger("event_bus", "blue")
 
     async def _dispatch_event(self, event):
@@ -93,44 +104,85 @@ class EventBus:
     async def publish(self, event):
         """publish an event"""
         await self.event_queue.put(event)
+        # try:
+        #     # 通过中间件处理
+        #     for middleware in self.middlewares:
+        #         event = await middleware(event)
+        #         if event is None:  # 中间件可以过滤事件
+        #             return
+        #
+        #     try:
+        #         self.event_queue.put_nowait(event)
+        #     except asyncio.QueueFull:
+        #         pass
+        #
+        # except Exception as e:
+        #     raise
+
+    async def _consumer_loop(self):
+        """消费者循环"""
+        while self._running_event.is_set():
+            try:
+                try:
+                    event = self.event_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    await asyncio.sleep(0.1)
+                    continue
+
+                if event:
+                    if isinstance(event, (KiraMessageEvent, KiraCommentEvent)):
+                        self.total_messages_stats["total_messages"] += 1
+                        self.stats.set_stats("messages", self.total_messages_stats)
+                    await self._process_event(event)
+                    self.event_bus_stats["processed"] += 1
+                    self.stats.set_stats("event_bus", self.event_bus_stats)
+
+            except Exception as e:
+                self.event_bus_stats["errors"] += 1
+                self.stats.set_stats("event_bus", self.event_bus_stats)
+
+    async def _process_event(self, event):
+        """处理单个事件"""
+        event_type = event.event_type
+
+        # 处理所有订阅者
+        if event_type in self.subscribers:
+            for handler in self.subscribers[event_type]:
+                try:
+                    await handler(event)
+                except Exception as e:
+                    self.event_bus_stats["errors"] += 1
+                    self.stats.set_stats("event_bus", self.event_bus_stats)
 
     async def dispatch(self):
         """start event bus"""
         self._running_event.set()
 
         while self._running_event.is_set():
-            event = await self.event_queue.get()
-            # None sentinel injected by stop() to unblock the consumer
-            if event is None:
-                break
+            event: Union[KiraMessageEvent, KiraCommentEvent] = await self.event_queue.get()
             if isinstance(event, (KiraMessageEvent, KiraCommentEvent)):
                 self.total_messages_stats["total_messages"] += 1
                 self.stats.set_stats("messages", self.total_messages_stats)
             task = asyncio.create_task(self._dispatch_event(event))
-            self._pending_dispatches.add(task)
 
-            def _on_task_done(t: asyncio.Task):
-                self._pending_dispatches.discard(t)
+            def _log_task_error(t: asyncio.Task):
                 try:
                     exc = t.exception()
                     if exc:
                         self.event_bus_stats["errors"] += 1
                         self.stats.set_stats("event_bus", self.event_bus_stats)
                         self.logger.error(f"Error in event dispatch task: {exc}")
-                    else:
-                        self.event_bus_stats["processed"] += 1
-                        self.stats.set_stats("event_bus", self.event_bus_stats)
                 except asyncio.CancelledError:
                     return
 
-            task.add_done_callback(_on_task_done)
+            task.add_done_callback(_log_task_error)
 
     async def stop(self):
         """stop event bus"""
         self._running_event.clear()
-        await self.event_queue.put(None)
-        if self._pending_dispatches:
-            await asyncio.wait(self._pending_dispatches, timeout=10.0)
+        # for task in self._running_tasks:
+        #     task.cancel()
+        # await asyncio.gather(*self._running_tasks, return_exceptions=True)
 
     def get_stats(self) -> Dict[str, int]:
         """get statistics of event bus"""

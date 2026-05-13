@@ -15,7 +15,6 @@ from core.config import KiraConfig
 from core.persona import PersonaManager
 from core.sticker_manager import StickerManager
 from core.utils.path_utils import get_data_path
-from core.logging_manager import get_logger
 from core.chat.message_elements import Text
 
 if TYPE_CHECKING:
@@ -106,9 +105,7 @@ class PluginContext:
             provider_id = parts[0]
             model_id = ":".join(parts[1:])
             client = self.provider_mgr.get_model_client(provider_id, model_id)
-        except (AttributeError, ValueError) as e:
-            logger = get_logger("plugin", "cyan")
-            logger.debug(f"Failed to parse model_uuid '{model_uuid}': {e}")
+        except:
             return
         if isinstance(client, LLMModelClient):
             return client
@@ -130,9 +127,7 @@ class PluginContext:
             provider_id = parts[0]
             model_id = ":".join(parts[1:])
             client = self.provider_mgr.get_model_client(provider_id, model_id)
-        except (AttributeError, ValueError) as e:
-            logger = get_logger("plugin", "cyan")
-            logger.debug(f"Failed to parse model_uuid '{model_uuid}': {e}")
+        except:
             return
         if isinstance(client, EmbeddingModelClient):
             return client

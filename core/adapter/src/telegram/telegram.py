@@ -43,10 +43,6 @@ class MessageSender:
             for attempt in range(self.max_retries + 1):
                 try:
                     return await asyncio.wait_for(send_func(*args, **kwargs), timeout=30.0)
-                except asyncio.TimeoutError:
-                    # TimeoutError means the request may have been delivered
-                    # but the response never arrived — retrying could duplicate.
-                    raise
                 except Exception:
                     if attempt < self.max_retries:
                         await asyncio.sleep(self.retry_delay * (2 ** attempt))
@@ -259,9 +255,8 @@ class TelegramAdapter(IMAdapter):
                 # Collect mention entities with their positions
                 mentions = []
                 for ent in entities:
-                    parsed = tg_message.parse_entity(ent)
                     if ent.type == "mention":
-                        username = parsed.lstrip("@")
+                        username = tg_message.text[ent.offset: ent.offset + ent.length].lstrip("@")
                         # Resolve display name: bot self → full_name directly,
                         # others → use @username (avoid per-mention get_chat to prevent rate-limit issues)
                         display = username
@@ -273,7 +268,7 @@ class TelegramAdapter(IMAdapter):
                         mentions.append((ent.offset, ent.length, At(pid=username, nickname=display)))
                     elif ent.type == "text_mention" and getattr(ent, "user", None):
                         user_obj = ent.user
-                        display = parsed or getattr(user_obj, "full_name", None) or getattr(user_obj, "username", None) or str(user_obj.id)
+                        display = getattr(user_obj, "full_name", None) or getattr(user_obj, "username", None) or str(user_obj.id)
                         mentions.append((ent.offset, ent.length, At(pid=str(user_obj.id), nickname=display)))
                 # Sort by position to interleave text and At in order
                 mentions.sort(key=lambda m: m[0])
@@ -439,15 +434,17 @@ class TelegramAdapter(IMAdapter):
 
             # ── Image ──
             elif isinstance(ele, Image):
-                if ele.image_type == "url":
-                    sent = await self.message_sender.send_with_retry(
-                        self.app.bot.send_photo, chat_id=chat_id, photo=ele.image, **reply_kw
-                    )
-                else:
-                    image_base64 = await ele.to_base64()
-                    sent = await self.message_sender.send_with_retry(
-                        self.app.bot.send_photo, chat_id=chat_id, photo=base64.b64decode(image_base64), **reply_kw
-                    )
+                # if ele.image_type == "url":
+                #     sent = await self.message_sender.send_with_retry(
+                #         self.app.bot.send_photo, chat_id=chat_id, photo=ele.image, **reply_kw
+                #     )
+                # else:
+
+                # Some URLs may not accessible by Telegram's servers
+                image_base64 = await ele.to_base64()
+                sent = await self.message_sender.send_with_retry(
+                    self.app.bot.send_photo, chat_id=chat_id, photo=base64.b64decode(image_base64), **reply_kw
+                )
                 message_id = str(sent.message_id)
 
             # ── Record (voice) ──
@@ -469,13 +466,8 @@ class TelegramAdapter(IMAdapter):
             # ── File (document) ──
             elif isinstance(ele, File):
                 file_path = await ele.to_path()
-                loop = asyncio.get_running_loop()
-
-                def _read_file():
-                    with open(file_path, "rb") as f:
-                        return f.read()
-
-                file_bytes = await loop.run_in_executor(None, _read_file)
+                with open(file_path, "rb") as f:
+                    file_bytes = f.read()
                 sent = await self.message_sender.send_with_retry(
                     self.app.bot.send_document, chat_id=chat_id, document=file_bytes, filename=ele.name or "file", **reply_kw
                 )
@@ -484,13 +476,8 @@ class TelegramAdapter(IMAdapter):
             # ── Video ──
             elif isinstance(ele, Video):
                 video_path = await ele.to_path()
-                loop = asyncio.get_running_loop()
-
-                def _read_video():
-                    with open(video_path, "rb") as f:
-                        return f.read()
-
-                video_bytes = await loop.run_in_executor(None, _read_video)
+                with open(video_path, "rb") as f:
+                    video_bytes = f.read()
                 sent = await self.message_sender.send_with_retry(
                     self.app.bot.send_video, chat_id=chat_id, video=video_bytes, filename=ele.name or "video", **reply_kw
                 )

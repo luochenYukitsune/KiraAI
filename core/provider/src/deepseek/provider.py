@@ -15,7 +15,7 @@ class DeepSeekProvider(BaseProvider):
 
     async def get_llm_list(self) -> list[dict]:
         """
-        Fetch available models from DeepSeek API (GET /models).
+        Fetch available models from DeepSeek API (GET /v1/models).
         """
         base_url = self.provider_config.get("base_url", "https://api.deepseek.com").rstrip("/")
         api_key = self.provider_config.get("api_key", "")
